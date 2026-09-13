@@ -13,6 +13,7 @@ import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.views.RichText
 import com.tencent.kuikly.core.views.RichTextView
 import com.tencent.kuikly.core.views.Span
+import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
 import com.tencent.kuikly.core.views.layout.Row
 

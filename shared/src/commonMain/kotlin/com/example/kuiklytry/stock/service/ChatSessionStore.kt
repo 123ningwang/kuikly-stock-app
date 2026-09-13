@@ -4,7 +4,10 @@ import com.example.kuiklytry.stock.model.ChatBlock
 import com.example.kuiklytry.stock.model.ChatMessage
 import com.example.kuiklytry.stock.model.ChatRole
 import com.example.kuiklytry.stock.model.PricePoint
+import com.example.kuiklytry.stock.model.QuoteKind
+import com.example.kuiklytry.stock.model.RiskLevel
 import com.example.kuiklytry.stock.model.StockQuote
+import com.example.kuiklytry.stock.model.TrendDirection
 import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 
@@ -83,6 +86,16 @@ private fun blockToJson(block: ChatBlock): JSONObject {
             obj.put("stock", quoteToJson(block.stock))
             obj.put("points", pointsToJson(block.points))
         }
+        is ChatBlock.TrendCard -> {
+            obj.put("type", "trend_card")
+            obj.put("direction", block.direction.name)
+            obj.put("signals", stringListToJson(block.signals))
+        }
+        is ChatBlock.RiskCard -> {
+            obj.put("type", "risk_card")
+            obj.put("level", block.level.name)
+            obj.put("warnings", stringListToJson(block.warnings))
+        }
     }
     return obj
 }
@@ -98,6 +111,24 @@ private fun blockFromJson(obj: JSONObject): ChatBlock? = when (obj.optString("ty
         val points = obj.optJSONArray("points")?.let { pointsFromJson(it) } ?: emptyList()
         ChatBlock.MiniChart(stock, points)
     }
+    "trend_card" -> {
+        val direction = try {
+            TrendDirection.valueOf(obj.optString("direction"))
+        } catch (e: Exception) {
+            TrendDirection.FLAT
+        }
+        val signals = obj.optJSONArray("signals")?.let { stringListFromJson(it) } ?: emptyList()
+        ChatBlock.TrendCard(direction, signals)
+    }
+    "risk_card" -> {
+        val level = try {
+            RiskLevel.valueOf(obj.optString("level"))
+        } catch (e: Exception) {
+            RiskLevel.MEDIUM
+        }
+        val warnings = obj.optJSONArray("warnings")?.let { stringListFromJson(it) } ?: emptyList()
+        ChatBlock.RiskCard(level, warnings)
+    }
     else -> null
 }
 
@@ -109,6 +140,7 @@ private fun quoteToJson(q: StockQuote): JSONObject {
     obj.put("price", q.price)
     obj.put("change", q.change)
     obj.put("changePercent", q.changePercent)
+    obj.put("kind", q.kind.name)
     return obj
 }
 
@@ -118,7 +150,12 @@ private fun quoteFromJson(obj: JSONObject): StockQuote = StockQuote(
     market = obj.optString("market", "SH"),
     price = obj.optDouble("price", 0.0),
     change = obj.optDouble("change", 0.0),
-    changePercent = obj.optDouble("changePercent", 0.0)
+    changePercent = obj.optDouble("changePercent", 0.0),
+    kind = try {
+        QuoteKind.valueOf(obj.optString("kind", "STOCK"))
+    } catch (e: Exception) {
+        QuoteKind.STOCK
+    }
 )
 
 private fun pointsToJson(points: List<PricePoint>): JSONArray {
@@ -137,6 +174,20 @@ private fun pointsFromJson(arr: JSONArray): List<PricePoint> {
     for (i in 0 until arr.length()) {
         val obj = arr.optJSONObject(i) ?: continue
         list.add(PricePoint(obj.optString("label"), obj.optDouble("price", 0.0)))
+    }
+    return list
+}
+
+private fun stringListToJson(list: List<String>): JSONArray {
+    val arr = JSONArray()
+    list.forEach { arr.put(it) }
+    return arr
+}
+
+private fun stringListFromJson(arr: JSONArray): List<String> {
+    val list = mutableListOf<String>()
+    for (i in 0 until arr.length()) {
+        list.add(arr.optString(i) ?: "")
     }
     return list
 }
