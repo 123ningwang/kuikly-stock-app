@@ -1,3 +1,5 @@
+
+
 # Kuiklytry
 
 基于 Kuikly 2.7.0 + Kotlin Multiplatform 开发的 AI 股票对话 Demo，支持自然语言问答、股票卡片、迷你折线图、趋势 / 风险洞察块，跨平台 UI 渲染。
@@ -89,8 +91,7 @@ private val aiRepository: AiRepository = MockAiRepository(stockRepository)
 ## 原型演示视频
 本视频完整演示Kuikly跨平台AI股票应用全链路功能，展示页面交互、关键操作以及AI分析问答效果：
 
-粘贴GitHub自动生成的视频链接在这里
-
+https://github.com/user-attachments/assets/acad6b98-5fea-44f9-955e-ce5318222c08
 
 ## License
 
