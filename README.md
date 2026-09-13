@@ -86,6 +86,12 @@ private val aiRepository: AiRepository = MockAiRepository(stockRepository)
 
 架构详见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
 
+## 原型演示视频
+本视频完整演示Kuikly跨平台AI股票应用全链路功能，展示页面交互、关键操作以及AI分析问答效果：
+
+粘贴GitHub自动生成的视频链接在这里
+
+
 ## License
 
 本项目为 Demo 示例，仅供学习参考。Kuikly 框架版权归腾讯所有。
