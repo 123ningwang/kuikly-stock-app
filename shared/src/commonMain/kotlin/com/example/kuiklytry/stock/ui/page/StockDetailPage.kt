@@ -1,8 +1,8 @@
 package com.example.kuiklytry.stock.ui.page
 
 import com.example.kuiklytry.base.BasePager
-import com.example.kuiklytry.stock.model.StockDetail
 import com.example.kuiklytry.stock.service.ServiceLocator
+import com.example.kuiklytry.stock.state.StockDetailState
 import com.example.kuiklytry.stock.ui.component.AppIcons
 import com.example.kuiklytry.stock.ui.component.LineChart
 import com.example.kuiklytry.stock.ui.component.markdown.MarkdownText
@@ -14,8 +14,6 @@ import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.base.ViewRef
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.module.RouterModule
-import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
-import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.views.Input
 import com.tencent.kuikly.core.views.InputView
 import com.tencent.kuikly.core.views.Scroller
@@ -28,21 +26,18 @@ import com.tencent.kuikly.core.views.layout.Row
  *
  * 从聊天页点击股票卡片进入，展示基础行情、走势图表、行情摘要与 AI 解读分析，
  * 底部提供追问输入框，发送后回到聊天页继续对话。
- * 股票代码通过路由参数 `code` 传入，数据来源于 [ServiceLocator.stockService]。
+ * 股票代码通过路由参数 `code` 传入，数据由 [StockDetailState]（状态层）加载自 [ServiceLocator.stockService]。
  */
 @Page("stock_detail", supportInLocal = true)
 internal class StockDetailPage : BasePager() {
 
-    private val stockService = ServiceLocator.stockService
+    internal val state = StockDetailState(ServiceLocator.stockService)
 
-    internal var detail by observable<StockDetail?>(null)
-    internal var inputText by observable("")
     internal lateinit var inputRef: ViewRef<InputView>
 
     override fun created() {
         super.created()
-        val code = pageData.params.optString("code")
-        detail = stockService.getDetail(code)
+        state.load(pageData.params.optString("code"))
     }
 
     override fun body(): ViewBuilder {
@@ -52,10 +47,10 @@ internal class StockDetailPage : BasePager() {
 
             detailNavBar(ctx)
 
-            vif({ ctx.detail != null }) {
+            vif({ ctx.state.detail != null }) {
                 detailContent(ctx)
             }
-            vif({ ctx.detail == null }) {
+            vif({ ctx.state.detail == null }) {
                 notFound()
             }
 
@@ -69,13 +64,14 @@ internal class StockDetailPage : BasePager() {
     }
 
     internal fun sendQuestion() {
-        val text = inputText.trim()
+        val text = state.inputText.trim()
         if (text.isEmpty()) return
-        inputText = ""
+        state.inputText = ""
         inputRef.view?.setText("")
         inputRef.view?.blur()
-        val pageData = JSONObject().apply { put("question", text) }
-        acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("stock_chat", pageData)
+        // 关闭详情页回退到聊天页，问题经 ServiceLocator 传递，由 ChatPage.pageDidAppear 消费并发送
+        ServiceLocator.pendingQuestion = text
+        closePage()
     }
 }
 
@@ -112,7 +108,7 @@ private fun ViewContainer<*, *>.detailNavBar(ctx: StockDetailPage) {
             }
             Text {
                 attr {
-                    text(if (ctx.detail?.quote?.isIndex == true) "指数详情" else "股票详情")
+                    text(if (ctx.state.detail?.quote?.isIndex == true) "指数详情" else "股票详情")
                     fontSize(17f)
                     fontWeightSemiBold()
                     color(StockTheme.textPrimary)
@@ -123,7 +119,7 @@ private fun ViewContainer<*, *>.detailNavBar(ctx: StockDetailPage) {
 }
 
 private fun ViewContainer<*, *>.detailContent(ctx: StockDetailPage) {
-    val detail = ctx.detail ?: return
+    val detail = ctx.state.detail ?: return
     val quote = detail.quote
     val changeColor = if (quote.isUp) StockTheme.up else StockTheme.down
     val changeIcon = if (quote.isUp) AppIcons.UP else AppIcons.DOWN
@@ -366,7 +362,7 @@ private fun ViewContainer<*, *>.detailInputBar(ctx: StockDetailPage) {
                     returnKeyTypeSend()
                 }
                 event {
-                    textDidChange { ctx.inputText = it.text }
+                    textDidChange { ctx.state.inputText = it.text }
                     inputReturn { ctx.sendQuestion() }
                 }
             }

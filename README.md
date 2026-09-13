@@ -17,7 +17,7 @@
 - **框架**：Kuikly 2.7.0（Kotlin Multiplatform，DSL 声明式 UI）
 - **语言**：Kotlin 2.1.21
 - **组件**：Kuikly 官方 `RichText/Span`（Markdown 渲染）、`Canvas`（折线图）、`List/Scroller`（聊天列表）、`Input`（输入框）、`RouterModule`（页面路由）
-- **架构**：UI 视图层 / 业务逻辑层 / 数据模型层 三层解耦 + 数据源接口预留
+- **架构**：页面 / 组件 / 数据 / 状态四层分离，业务逻辑层与数据源层接口预留
 
 ## 三、目录结构
 
@@ -32,12 +32,17 @@ shared/src/commonMain/kotlin/com/example/kuiklytry/
     │   ├── AiRepository.kt     #   大模型问答接口
     │   ├── StockRepository.kt  #   股票行情接口
     │   ├── MockAiRepository.kt #   大模型 Mock 实现
+    │   ├── RealAiRepository.kt #   DeepSeek 真实实现（应用内配置 API Key）
     │   └── MockStockRepository.kt # 行情 Mock 实现
     ├── service/                # 业务逻辑层
     │   ├── ChatService.kt      #   聊天编排
     │   ├── StockService.kt     #   股票业务组装
+    │   ├── ChatSessionStore.kt #   会话持久化（序列化 / 反序列化）
     │   └── ServiceLocator.kt   #   依赖装配（替换真实实现的唯一入口）
-    └── ui/                     # UI 视图层
+    ├── state/                  # 状态层（页面 / 组件 / 数据 / 状态 四层分离）
+    │   ├── ChatState.kt        #   聊天页状态与状态变更逻辑
+    │   └── StockDetailState.kt #   详情页状态
+    └── ui/                     # UI 视图层（页面 / 组件）
         ├── theme/              #   主题色板与尺寸
         ├── component/          #   可复用组件
         │   ├── markdown/       #   Markdown 解析器 + RichText 渲染组件（含表格）

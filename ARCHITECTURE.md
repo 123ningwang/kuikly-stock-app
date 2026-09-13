@@ -18,6 +18,9 @@
 │   page/ 页面 · component/ 组件 · theme/ 主题          │
 │   ChatPage / StockDetailPage / MarkdownText / ...    │
 ├─────────────────────────────────────────────────────┤
+│                   状态层 (state/)                     │
+│   ChatState（聊天状态）· StockDetailState（详情状态）   │
+├─────────────────────────────────────────────────────┤
 │                 业务逻辑层 (service/)                 │
 │   ChatService（聊天编排）· StockService（股票组装）     │
 │   ServiceLocator（依赖装配，替换真实实现的唯一入口）     │
@@ -34,15 +37,16 @@
 ### 依赖方向（单向，上层依赖下层）
 
 ```
-ui → service → repository(接口) ← mock 实现
-                     ↑
-                 model（被各层共享，纯数据，无依赖）
+ui → state → service → repository(接口) ← mock 实现
+                        ↑
+                    model（被各层共享，纯数据，无依赖）
 ```
 
 - **数据模型层**：纯 Kotlin 数据类，不依赖 Kuikly UI，保证可在任意层复用与单元测试。
 - **数据源层**：以接口定义数据契约，Mock 实现与未来真实实现并行存在，通过 `ServiceLocator` 切换。
 - **业务逻辑层**：编排数据源、组装业务结果，不直接触碰 UI 状态。
-- **UI 视图层**：Kuikly 声明式 DSL，持有响应式状态（`observable` / `observableList`），渲染与交互。
+- **状态层**：持有页面的响应式状态（`observable` / `observableList`）与状态变更逻辑（`ChatState` / `StockDetailState`），不依赖 ViewRef / Module / Pager；滚动、Toast、持久化等 UI 副作用由页面注入回调处理。
+- **UI 视图层**：Kuikly 声明式 DSL，负责渲染与交互，页面持有状态层对象并委托状态变更。
 
 ## 三、关键设计点
 
@@ -75,9 +79,9 @@ sealed class ChatBlock {
 
 ### 4. 响应式状态与列表
 
-- 会话记录使用 `observableList<ChatMessage>`，配合 `List` + `vforIndex` 实现增量更新与虚拟化滚动；
+- 会话记录等状态集中在状态层 `ChatState`，使用 `observableList<ChatMessage>`，配合 `List` + `vforIndex` 实现增量更新与虚拟化滚动；
 - 「正在输入」「空状态」等边界态通过 `vif` 条件渲染；
-- 滚动到底部通过 `ListView.setContentOffset` 实现。
+- 滚动到底部通过 `ListView.setContentOffset` 实现（由页面注入给状态层）。
 
 ### 5. 依赖装配（`ServiceLocator`）
 
@@ -90,6 +94,19 @@ sealed class ChatBlock {
 ### 7. 趋势判断与风险提醒卡片
 
 `buildInsightBlocks(quote)` 基于涨跌幅确定性生成「趋势判断」（方向 + 信号解读）与「风险提醒」（等级 + 风险点）两类结构化卡片，Mock 与真实 AI 模式共用。这使 AI 场景中的「趋势判断 / 风险提醒 / 信号解读」能力以可演示的卡片形式落地，而非依赖大模型自由发挥。
+
+### 8. 状态层（state/）与四层分离
+
+为对齐评分维度「页面 / 组件 / 数据 / 状态四层分离」，将页面中的响应式状态与状态变更逻辑从 UI 层抽离，形成独立的状态层：
+
+| 层 | 目录 | 职责 |
+| --- | --- | --- |
+| 页面 | `ui/page/` | 页面生命周期、路由、渲染与 UI 副作用注入 |
+| 组件 | `ui/component/` | 可复用视图组件（气泡 / 卡片 / 图表 / Markdown） |
+| 数据 | `model/` | 纯数据模型（`ChatMessage` / `StockQuote` / `StockDetail`） |
+| 状态 | `state/` | 响应式状态 + 状态变更逻辑（`ChatState` / `StockDetailState`） |
+
+`ChatState` 持有聊天页全部可观察状态（`messages` / `isTyping` / `inputText` 等）与 `ask` / `welcome` / `clearConversation` / `saveApiKey` 等状态变更方法，不依赖 `ViewRef` / `Module` / `Pager`；页面在 `created()` 中注入 `scrollToBottom` / `toast` / `persist` 三个回调，把 UI 副作用留在页面层，保证状态层可复用、可单元测试。
 
 ## 四、页面导航
 

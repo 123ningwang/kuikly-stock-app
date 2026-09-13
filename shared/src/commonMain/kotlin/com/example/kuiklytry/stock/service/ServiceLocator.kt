@@ -24,6 +24,9 @@ internal object ServiceLocator {
     // 当前使用的 DeepSeek 模型
     var model: String = "deepseek-chat"
 
+    // 详情页「继续追问」回退聊天页时的待发送问题（跨页面瞬态传递，消费后即清空）
+    var pendingQuestion: String? = null
+
     private val stockRepository: StockRepository = MockStockRepository()
 
     private val aiRepository: AiRepository = RealAiRepository(stockRepository, { apiKey }, { model })

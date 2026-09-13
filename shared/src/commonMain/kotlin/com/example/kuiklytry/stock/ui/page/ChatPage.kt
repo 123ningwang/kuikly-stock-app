@@ -3,12 +3,9 @@ package com.example.kuiklytry.stock.ui.page
 import com.example.kuiklytry.base.BasePager
 import com.example.kuiklytry.base.bridgeModule
 import com.example.kuiklytry.base.setTimeout
-import com.example.kuiklytry.stock.model.AiReply
-import com.example.kuiklytry.stock.model.ChatMessage
 import com.example.kuiklytry.stock.service.ServiceLocator
 import com.example.kuiklytry.stock.service.SESSION_STORAGE_KEY
-import com.example.kuiklytry.stock.service.sessionFromJson
-import com.example.kuiklytry.stock.service.toSessionJson
+import com.example.kuiklytry.stock.state.ChatState
 import com.example.kuiklytry.stock.ui.component.AppIcons
 import com.example.kuiklytry.stock.ui.component.ChatBubble
 import com.example.kuiklytry.stock.ui.theme.StockTheme
@@ -22,8 +19,6 @@ import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.module.RouterModule
 import com.tencent.kuikly.core.module.SharedPreferencesModule
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
-import com.tencent.kuikly.core.reactive.handler.observable
-import com.tencent.kuikly.core.reactive.handler.observableList
 import com.tencent.kuikly.core.views.Input
 import com.tencent.kuikly.core.views.InputView
 import com.tencent.kuikly.core.views.List
@@ -36,44 +31,47 @@ import com.tencent.kuikly.core.views.layout.Row
  * 页面 1：AI 聊天主页面。
  *
  * 功能：聊天输入、会话记录展示（区分用户/AI 气泡）、上下滚动查看历史、混合内容渲染、
- * 点击股票卡片跳转详情页。业务逻辑委托给 [ServiceLocator.chatService]。
+ * 点击股票卡片跳转详情页。
+ *
+ * 页面只负责渲染与 UI 副作用，聊天状态与业务编排委托给 [ChatState]（状态层），
+ * 数据与 AI 问答走 [ServiceLocator]（业务层 / 数据源层）。
  */
 @Page("stock_chat", supportInLocal = true)
 internal class ChatPage : BasePager() {
 
-    private val chatService = ServiceLocator.chatService
-
-    private var messages by observableList<ChatMessage>()
-    internal var inputText by observable("")
-    private var isTyping by observable(false)
-    internal var showSidebar by observable(false)
-    internal var showKeyPanel by observable(false)
-    internal var apiKeyInput by observable("")
+    internal val state = ChatState(ServiceLocator.chatService)
 
     internal lateinit var inputRef: ViewRef<InputView>
     private lateinit var listRef: ViewRef<ListView<*, *>>
 
-    private var messageSeq = 0
     private var contentHeight = 0f
 
     override fun created() {
         super.created()
-        restoreMessages()
-        if (messages.isEmpty()) {
-            chatService.welcome { appendAssistant(it) }
+        // 状态层与页面解耦：滚动 / Toast / 持久化等 UI 副作用由页面注入，避免状态层依赖 ViewRef / Module
+        state.scrollToBottom = { scrollToBottom() }
+        state.toast = { bridgeModule.toast(it) }
+        state.persist = { json ->
+            acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME)
+                .setItem(SESSION_STORAGE_KEY, json)
+        }
+        state.restore(
+            acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME)
+                .getItem(SESSION_STORAGE_KEY)
+        )
+        if (state.messages.isEmpty()) {
+            state.welcome()
         }
         if (ServiceLocator.apiKey.isNullOrBlank()) {
-            showSidebar = true
-            showKeyPanel = true
+            state.showSidebar = true
+            state.showKeyPanel = true
         }
     }
 
-    override fun viewDidLoad() {
-        super.viewDidLoad()
-        val question = pageData.params.optString("question")
-        if (question.isNotEmpty()) {
-            ask(question)
-        }
+    override fun pageDidAppear() {
+        super.pageDidAppear()
+        // 从详情页「继续追问」回退时，消费待发送问题并直接发起提问
+        state.consumePendingQuestion()?.let { state.ask(it) }
     }
 
     override fun body(): ViewBuilder {
@@ -99,12 +97,12 @@ internal class ChatPage : BasePager() {
                 }
 
                 // 空状态
-                vif({ ctx.messages.isEmpty() && !ctx.isTyping }) {
+                vif({ ctx.state.messages.isEmpty() && !ctx.state.isTyping }) {
                     emptyState()
                 }
 
                 // 会话记录
-                vforIndex({ ctx.messages }) { message, _, _ ->
+                vforIndex({ ctx.state.messages }) { message, _, _ ->
                     ChatBubble {
                         attr {
                             this.message = message
@@ -114,7 +112,7 @@ internal class ChatPage : BasePager() {
                 }
 
                 // 正在输入指示
-                vif({ ctx.isTyping }) {
+                vif({ ctx.state.isTyping }) {
                     typingIndicator()
                 }
             }
@@ -127,55 +125,11 @@ internal class ChatPage : BasePager() {
     }
 
     internal fun send() {
-        val text = inputText
-        inputText = ""
+        val text = state.inputText
+        state.inputText = ""
         inputRef.view?.setText("")
         inputRef.view?.blur()
-        ask(text)
-    }
-
-    private fun ask(text: String) {
-        val trimmed = text.trim()
-        if (trimmed.isEmpty()) return
-
-        if (ServiceLocator.apiKey.isNullOrBlank()) {
-            showSidebar = true
-            bridgeModule.toast("请先设置 API Key")
-            return
-        }
-
-        val seq = ++messageSeq
-        messages.add(ChatMessage.user("u$seq", trimmed))
-        persistMessages()
-        isTyping = true
-        scrollToBottom()
-
-        chatService.ask(trimmed, messages.toList()) { reply ->
-            appendAssistant(reply)
-            persistMessages()
-            isTyping = false
-            scrollToBottom()
-        }
-    }
-
-    private fun appendAssistant(reply: AiReply) {
-        val seq = ++messageSeq
-        messages.add(ChatMessage.assistant("a$seq", reply.blocks))
-    }
-
-    private fun persistMessages() {
-        val json = messages.toSessionJson()
-        acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME)
-            .setItem(SESSION_STORAGE_KEY, json)
-    }
-
-    private fun restoreMessages() {
-        val json = acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME)
-            .getItem(SESSION_STORAGE_KEY)
-        if (json.isNotEmpty()) {
-            messages.addAll(sessionFromJson(json))
-            messageSeq = messages.size
-        }
+        state.ask(text)
     }
 
     private fun scrollToBottom() {
@@ -189,33 +143,6 @@ internal class ChatPage : BasePager() {
     private fun openDetail(code: String) {
         val pageData = JSONObject().apply { put("code", code) }
         acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage("stock_detail", pageData)
-    }
-
-    internal fun saveApiKey() {
-        val key = apiKeyInput.trim()
-        if (key.isEmpty()) {
-            bridgeModule.toast("请输入 API Key")
-            return
-        }
-        ServiceLocator.apiKey = key
-        apiKeyInput = ""
-        showSidebar = false
-        showKeyPanel = false
-        bridgeModule.toast("API Key 已保存")
-    }
-
-    internal fun toggleModel() {
-        val next = if (ServiceLocator.model == "deepseek-chat") "deepseek-reasoner" else "deepseek-chat"
-        ServiceLocator.model = next
-        bridgeModule.toast("已切换为 $next")
-    }
-
-    internal fun clearConversation() {
-        messages.clear()
-        messageSeq = 0
-        acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME)
-            .setItem(SESSION_STORAGE_KEY, "")
-        bridgeModule.toast("对话已清除")
     }
 }
 
@@ -248,7 +175,7 @@ private fun ViewContainer<*, *>.chatNavBar(ctx: ChatPage) {
                     width(40f)
                     allCenter()
                 }
-                event { click { ctx.showSidebar = true } }
+                event { click { ctx.state.showSidebar = true } }
                 Text {
                     attr {
                         text(AppIcons.MENU)
@@ -332,13 +259,13 @@ private fun ViewContainer<*, *>.inputBarDivider() {
 
 private fun ViewContainer<*, *>.sidebar(ctx: ChatPage) {
     // [修复] 抽屉与遮罩都改为 vif 条件渲染，关闭时不渲染、不占布局、不遮挡底部输入框
-    vif({ ctx.showSidebar }) {
+    vif({ ctx.state.showSidebar }) {
         View {
             attr {
                 absolutePositionAllZero()
                 backgroundColor(Color(0x80000000))
             }
-            event { click { ctx.showSidebar = false } }
+            event { click { ctx.state.showSidebar = false } }
         }
         View {
             attr {
@@ -368,7 +295,7 @@ private fun ViewContainer<*, *>.sidebar(ctx: ChatPage) {
                         width(40f)
                         allCenter()
                     }
-                    event { click { ctx.showSidebar = false } }
+                    event { click { ctx.state.showSidebar = false } }
                     Text {
                         attr {
                             text("✕")
@@ -384,9 +311,9 @@ private fun ViewContainer<*, *>.sidebar(ctx: ChatPage) {
                     backgroundColor(StockTheme.divider)
                 }
             }
-            menuItem("API Key 设置") { ctx.showKeyPanel = !ctx.showKeyPanel }
-            menuItem("切换模型") { ctx.toggleModel() }
-            menuItem("清除对话") { ctx.clearConversation() }
+            menuItem("API Key 设置") { ctx.state.showKeyPanel = !ctx.state.showKeyPanel }
+            menuItem("切换模型") { ctx.state.toggleModel() }
+            menuItem("清除对话") { ctx.state.clearConversation() }
             menuItem("关于") { ctx.bridgeModule.toast("Kuikly AI 投研助手 Demo") }
             View {
                 attr {
@@ -394,7 +321,7 @@ private fun ViewContainer<*, *>.sidebar(ctx: ChatPage) {
                     backgroundColor(StockTheme.divider)
                 }
             }
-            vif({ ctx.showKeyPanel }) {
+            vif({ ctx.state.showKeyPanel }) {
                 keyPanel(ctx)
             }
         }
@@ -465,7 +392,7 @@ private fun ViewContainer<*, *>.keyPanel(ctx: ChatPage) {
                 placeholderColor(StockTheme.textSecondary)
             }
             event {
-                textDidChange { ctx.apiKeyInput = it.text }
+                textDidChange { ctx.state.apiKeyInput = it.text }
             }
         }
     }
@@ -479,7 +406,7 @@ private fun ViewContainer<*, *>.keyPanel(ctx: ChatPage) {
             borderRadius(StockTheme.RADIUS_SM)
             backgroundColor(StockTheme.primary)
         }
-        event { click { ctx.saveApiKey() } }
+        event { click { ctx.state.saveApiKey() } }
         Text {
             attr {
                 text("保存并使用")
@@ -532,7 +459,7 @@ private fun ViewContainer<*, *>.chatInputBar(ctx: ChatPage) {
                     returnKeyTypeSend()
                 }
                 event {
-                    textDidChange { ctx.inputText = it.text }
+                    textDidChange { ctx.state.inputText = it.text }
                     inputReturn { ctx.send() }
                 }
             }
