@@ -1,126 +1,144 @@
-# 项目架构设计说明
+# 架构设计
 
-## 一、设计目标
+基于 Kuikly 2.7.0（Kotlin Multiplatform）的 AI 股票对话 Demo。依赖方向单向：UI 视图层 → 状态层 → 业务层 → 数据源层，数据模型层被各层共享。
 
-以「AI 股票问答」为场景，在 Kuikly 跨平台框架上落地一个**分层清晰、可维护、易扩展**的 Demo，同时为接入真实大模型 / 行情 API 预留清晰的扩展点。
-
-核心诉求：
-
-1. **功能闭环**：聊天 → AI 混合内容回复 → 卡片跳转详情；
-2. **工程分层**：UI 视图层、业务逻辑层、数据模型层严格解耦；
-3. **可扩展**：接入真实 API 只改数据源层，UI 与业务层不动。
-
-## 二、分层架构
+## 分层架构
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                    UI 视图层 (ui/)                    │
+│                 UI 视图层 (ui/)                      │
 │   page/ 页面 · component/ 组件 · theme/ 主题          │
-│   ChatPage / StockDetailPage / MarkdownText / ...    │
+│   ChatPage / StockDetailPage / MarkdownText / ...   │
 ├─────────────────────────────────────────────────────┤
-│                   状态层 (state/)                     │
-│   ChatState（聊天状态）· StockDetailState（详情状态）   │
+│                 状态层 (state/)                      │
+│   ChatState · StockDetailState                      │
 ├─────────────────────────────────────────────────────┤
-│                 业务逻辑层 (service/)                 │
-│   ChatService（聊天编排）· StockService（股票组装）     │
-│   ServiceLocator（依赖装配，替换真实实现的唯一入口）     │
+│               业务逻辑层 (service/)                   │
+│   ChatService · StockService · ChatSessionStore      │
+│   ServiceLocator（依赖装配）                         │
 ├─────────────────────────────────────────────────────┤
-│                数据源层 (repository/)                 │
-│   AiRepository / StockRepository（接口，★ 扩展点）      │
-│   MockAiRepository / MockStockRepository（Mock 实现）  │
+│               数据源层 (repository/)                  │
+│   AiRepository / StockRepository（接口）              │
+│   RealAiRepository / MockAiRepository               │
+│   MockStockRepository                               │
 ├─────────────────────────────────────────────────────┤
-│                 数据模型层 (model/)                   │
-│   ChatMessage / ChatBlock / StockQuote / StockDetail  │
+│                数据模型层 (model/)                    │
+│   ChatMessage / ChatBlock / StockQuote / StockDetail │
 └─────────────────────────────────────────────────────┘
 ```
 
-### 依赖方向（单向，上层依赖下层）
+依赖方向：
 
 ```
-ui → state → service → repository(接口) ← mock 实现
+ui → state → service → repository(接口) ← mock / real 实现
                         ↑
-                    model（被各层共享，纯数据，无依赖）
+                  model（纯数据，被各层共享，不依赖 Kuikly UI）
 ```
 
-- **数据模型层**：纯 Kotlin 数据类，不依赖 Kuikly UI，保证可在任意层复用与单元测试。
-- **数据源层**：以接口定义数据契约，Mock 实现与未来真实实现并行存在，通过 `ServiceLocator` 切换。
-- **业务逻辑层**：编排数据源、组装业务结果，不直接触碰 UI 状态。
-- **状态层**：持有页面的响应式状态（`observable` / `observableList`）与状态变更逻辑（`ChatState` / `StockDetailState`），不依赖 ViewRef / Module / Pager；滚动、Toast、持久化等 UI 副作用由页面注入回调处理。
-- **UI 视图层**：Kuikly 声明式 DSL，负责渲染与交互，页面持有状态层对象并委托状态变更。
-
-## 三、关键设计点
-
-### 1. 混合内容块模型（`ChatBlock`）
-
-AI 回复被抽象为「内容块」列表，而非单一文本：
-
-```kotlin
-sealed class ChatBlock {
-    data class Text(val markdown: String) : ChatBlock()       // Markdown 富文本
-    data class StockCard(val stock: StockQuote) : ChatBlock()  // 股票 / 指数信息卡
-    data class MiniChart(val stock: StockQuote, val points: List<PricePoint>) : ChatBlock() // 迷你折线图卡
-    data class TrendCard(val direction: TrendDirection, val signals: List<String>) : ChatBlock() // 趋势判断卡
-    data class RiskCard(val level: RiskLevel, val warnings: List<String>) : ChatBlock() // 风险提醒卡
-}
-```
-
-渲染层通过 `when` 分发，符合**开闭原则**——新增内容形态（如表格、K 线图、图片）只需新增一个 `ChatBlock` 子类与对应渲染分支，不影响既有逻辑。
-
-### 2. Markdown 渲染（Kuikly-Markdown 落地）
-
-- `MarkdownParser`：轻量 Markdown 解析器，输出语法树（标题 / 段落 / 列表 / 引用 / 分割线 / 表格 + 行内粗体、斜体、代码）；
-- `MarkdownText`：基于 Kuikly 官方 `RichText/Span` 组件渲染语法树，表格用 Row/Text 均分列宽渲染。
-
-对外只暴露 `MarkdownText { attr { text = ... } }`，未来若官方推出独立 Markdown 组件，仅需替换该组件内部实现。
-
-### 3. 折线图复用
-
-`LineChart` 组件基于 Kuikly 官方 `Canvas` 绘制，绘制逻辑抽离为纯函数 `drawPolylineChart(...)`，被迷你走势卡片与详情页图表复用，保证视觉一致。
-
-### 4. 响应式状态与列表
-
-- 会话记录等状态集中在状态层 `ChatState`，使用 `observableList<ChatMessage>`，配合 `List` + `vforIndex` 实现增量更新与虚拟化滚动；
-- 「正在输入」「空状态」等边界态通过 `vif` 条件渲染；
-- 滚动到底部通过 `ListView.setContentOffset` 实现（由页面注入给状态层）。
-
-### 5. 依赖装配（`ServiceLocator`）
-
-所有依赖在 `ServiceLocator` 中集中创建。接入真实 API 时，仅需在此处把 `MockXxxRepository` 替换为 `RealXxxRepository`，UI 与业务层零改动。
-
-### 6. 指数类型区分
-
-行情标的通过 `StockQuote.kind`（`QuoteKind.STOCK` / `QuoteKind.INDEX`）区分股票与指数。卡片在代码旁标注「股票 / 指数」，详情页据此动态切换标题（「股票详情」/「指数详情」）与走势卡片标题（「股价走势」/「指数走势」）。指数与股票共用同一套卡片、详情页与跳转闭环，无需重复实现。
-
-### 7. 趋势判断与风险提醒卡片
-
-`buildInsightBlocks(quote)` 基于涨跌幅确定性生成「趋势判断」（方向 + 信号解读）与「风险提醒」（等级 + 风险点）两类结构化卡片，Mock 与真实 AI 模式共用。这使 AI 场景中的「趋势判断 / 风险提醒 / 信号解读」能力以可演示的卡片形式落地，而非依赖大模型自由发挥。
-
-### 8. 状态层（state/）与四层分离
-
-为对齐评分维度「页面 / 组件 / 数据 / 状态四层分离」，将页面中的响应式状态与状态变更逻辑从 UI 层抽离，形成独立的状态层：
+四层分离（页面 / 组件 / 数据 / 状态）：
 
 | 层 | 目录 | 职责 |
 | --- | --- | --- |
-| 页面 | `ui/page/` | 页面生命周期、路由、渲染与 UI 副作用注入 |
-| 组件 | `ui/component/` | 可复用视图组件（气泡 / 卡片 / 图表 / Markdown） |
-| 数据 | `model/` | 纯数据模型（`ChatMessage` / `StockQuote` / `StockDetail`） |
+| 页面 | `ui/page/` | 页面生命周期、路由、渲染、UI 副作用注入 |
+| 组件 | `ui/component/` | 可复用视图（气泡 / 卡片 / 图表 / Markdown） |
+| 数据 | `model/` | 纯数据模型（`ChatMessage` / `ChatBlock` / `StockQuote` / `StockDetail`） |
 | 状态 | `state/` | 响应式状态 + 状态变更逻辑（`ChatState` / `StockDetailState`） |
 
-`ChatState` 持有聊天页全部可观察状态（`messages` / `isTyping` / `inputText` 等）与 `ask` / `welcome` / `clearConversation` / `saveApiKey` 等状态变更方法，不依赖 `ViewRef` / `Module` / `Pager`；页面在 `created()` 中注入 `scrollToBottom` / `toast` / `persist` 三个回调，把 UI 副作用留在页面层，保证状态层可复用、可单元测试。
+## 数据流
 
-## 四、页面导航
+**聊天问答**
+
+```
+用户输入
+  → ChatPage.send → ChatState.ask
+  → ChatService.ask → AiRepository.reply(userInput, history, onResult)
+  → onResult(AiReply) → ChatState.appendAssistant → messages(observableList)
+  → 列表增量刷新（List + vforIndex）
+```
+
+**详情页**
+
+```
+点击卡片 → ChatPage.openDetail → RouterModule.openPage("stock_detail", { code })
+  → StockDetailPage.created → StockDetailState.load(code)
+  → StockService.getDetail → StockRepository.getDetail → StockDetail
+  → detail(observable) → 页面渲染
+```
+
+## 依赖装配
+
+所有依赖集中在 `ServiceLocator` 创建，UI 层只通过 `chatService` / `stockService` 获取业务能力，不感知数据源实现。切换真实 / Mock 只改这一处。
+
+| 成员 | 类型 / 值 | 说明 |
+| --- | --- | --- |
+| `apiKey` | `String?` | DeepSeek API Key，仅内存 |
+| `model` | `String` | `deepseek-chat` / `deepseek-reasoner` |
+| `pendingQuestion` | `String?` | 详情页「继续追问」跨页面瞬态传递 |
+| `stockRepository` | `MockStockRepository` | 行情数据源（当前 Mock） |
+| `aiRepository` | `RealAiRepository` | AI 数据源（当前 DeepSeek） |
+| `chatService` / `stockService` | — | 对外暴露的业务服务 |
+
+## 接口定义
+
+```kotlin
+internal interface AiRepository {
+    fun reply(userInput: String, history: List<ChatMessage>, onResult: (AiReply) -> Unit)
+}
+
+internal interface StockRepository {
+    fun getQuote(code: String): StockQuote?
+    fun getDetail(code: String): StockDetail?
+    fun getAllQuotes(): List<StockQuote>
+}
+```
+
+接口为 `internal`，采用回调式签名适配网络异步返回。
+
+| 实现 | 数据源 | 行为 |
+| --- | --- | --- |
+| `RealAiRepository` | DeepSeek `chat/completions` | `stream=false` 单次回调；Bearer 鉴权；多轮历史拼接；识别到股票时附加卡片 / 图表 / 洞察内容块 |
+| `MockAiRepository` | 本地关键字匹配 | 按「代码 → 名称」匹配；命中返回结构化回复，未命中返回引导语 |
+| `MockStockRepository` | 硬编码 | 4 只股票 + 3 个指数，含走势点、摘要、AI 解读 |
+
+## ChatBlock 设计
+
+AI 回复抽象为内容块列表，而非单一文本：
+
+```kotlin
+sealed class ChatBlock {
+    data class Text(val markdown: String) : ChatBlock()
+    data class StockCard(val stock: StockQuote) : ChatBlock()
+    data class MiniChart(val stock: StockQuote, val points: List<PricePoint>) : ChatBlock()
+    data class TrendCard(val direction: TrendDirection, val signals: List<String>) : ChatBlock()
+    data class RiskCard(val level: RiskLevel, val warnings: List<String>) : ChatBlock()
+}
+```
+
+- 渲染层通过 `when` 分发，新增内容形态只需加子类 + 分支，符合开闭原则。
+- Markdown 由 `MarkdownParser` 解析为语法树，`MarkdownText` 基于官方 `RichText/Span` 渲染，表格用 `Row/Text` 均分列宽。
+- 折线图由 `LineChart`（`Canvas`）绘制，绘制逻辑抽为纯函数 `drawPolylineChart(...)`，被迷你卡片与详情页复用。
+- `buildInsightBlocks(quote)` 按涨跌幅阈值 ±1.0% 生成「趋势判断 + 风险提醒」，Mock 与真实模式共用。
+
+## 路由
 
 | 页面 | 路由名 | 说明 |
 | --- | --- | --- |
-| 聊天主页面 | `stock_chat` | 应用入口页 |
-| 股票详情页 | `stock_detail` | 通过 `RouterModule.openPage("stock_detail", { code })` 进入 |
+| 聊天主页 | `stock_chat` | 应用默认入口（`KuiklyRenderActivity` 的 `pageName` 兜底值） |
+| 股票详情页 | `stock_detail` | 经 `RouterModule.openPage("stock_detail", { code })` 进入 |
 
-详情页在 `created()` 中读取路由参数 `code`，再由 `StockService` 加载数据。
+- 详情页在 `created()` 中读取 `pageData.params.optString("code")` 加载数据。
+- 「继续追问」通过 `ServiceLocator.pendingQuestion` 跨页传递：详情页写入并关闭，聊天页在 `pageDidAppear` 中消费后发起提问。
 
-## 五、扩展方向预留
+## 持久化
 
-1. **真实大模型 API**：实现 `AiRepository`，签名升级为 suspend / 回调，走 `BridgeModule.ssoRequest`；
-2. **真实行情 API**：实现 `StockRepository`；
-3. **流式输出**：`ChatBlock.Text` 支持增量追加，配合 `observable` 实现打字机效果；
-4. **多轮上下文**：`ChatService` 维护历史上下文，提交给大模型；
-5. **图标替换**：`AppIcons` 中的字形可整体替换为 iconfont / 官方图标组件。
+`ChatSessionStore` 提供 `toSessionJson` / `sessionFromJson`，序列化整条 `ChatMessage`（含 `ChatBlock` 全形态）。存储 Key 为 `stock_ai_chat_session_v1`，Android 侧由 `SharedPreferencesModule` 落盘。页面在 `created()` 中恢复，消息变更时写回。
+
+## 扩展点
+
+接入真实行情 API 三步：
+
+1. 实现 `StockRepository`（`getQuote` / `getDetail` / `getAllQuotes`），通过 `BridgeModule`（`ssoRequest` / `httpRequest`）走宿主网络请求真实行情接口；
+2. 在 `ServiceLocator` 将 `MockStockRepository` 替换为真实实现；
+3. 切回本地演示：将 `RealAiRepository` 换回 `MockAiRepository(stockRepository)`，并在应用内填一个非空 Key（`ChatState.ask` 仍校验 Key）。
+
+新增内容形态 = 新增 `ChatBlock` 子类 + 渲染分支 + `ChatSessionStore` 序列化分支，三者配套。
