@@ -93,6 +93,9 @@ private val aiRepository: AiRepository = MockAiRepository(stockRepository)
 
 https://github.com/user-attachments/assets/acad6b98-5fea-44f9-955e-ce5318222c08
 
+备用完整视频下载
+https://github.com/123ningwang/kuikly-stock-app/blob/main/Screenrecording_20260913_201437.mp4
+
 ## License
 
 本项目为 Demo 示例，仅供学习参考。Kuikly 框架版权归腾讯所有。
